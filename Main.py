@@ -39,6 +39,9 @@ LAST_X, LAST_Y = 840, 250
 LAST_W, LAST_H = 410, 260  
 TEXT_OFFSET_Y = 40         
 
+# 🔥 [เพิ่ม] จำนวนคนล่าสุดที่จะแสดง (ปรับแก้ตรงนี้ได้เลย)
+MAX_HISTORY = 5 
+
 SIMILARITY_THRESHOLD = 0.40
 SHOW_RESULT_DURATION = 3
 
@@ -52,43 +55,58 @@ latest_face_img = None
 latest_names = []           
 latest_time = ""            
 
-# 🔥 ตัวแปรสำหรับเช็คชื่อ
-present_students = set() # เก็บ ID ของคนที่มาแล้ว (ใช้ Set เพื่อไม่ให้ซ้ำ)
+# 🔥 ตัวแปรสำหรับเช็คชื่อและประวัติ
+present_students = set() 
+scan_history = []  # เก็บประวัติคนล่าสุด [{'name':..., 'time':...}, ...]
 today_str = datetime.datetime.now().strftime("%Y-%m-%d")
-attendance_file = f"attendance_{today_str}.csv" # ชื่อไฟล์บันทึก เช่น attendance_2024-01-15.csv
+attendance_file = f"attendance_{today_str}.csv" 
 
 # ==========================================
 # 🔧 ฟังก์ชันช่วยเหลือ
 # ==========================================
 
 def load_today_attendance():
-    """โหลดข้อมูลการมาเรียนของวันนี้ (กรณีเปิดโปรแกรมใหม่)"""
+    """โหลดข้อมูลเก่าและประวัติล่าสุดเมื่อเปิดโปรแกรม"""
+    global scan_history
     if not os.path.exists(attendance_file):
-        # ถ้ายังไม่มีไฟล์ ให้สร้างและเขียนหัวตาราง
         with open(attendance_file, 'w', newline='', encoding='utf-8-sig') as f:
             writer = csv.writer(f)
             writer.writerow(["Student ID", "Name", "Time"])
         return
 
-    # ถ้ามีไฟล์แล้ว ให้อ่าน ID เข้ามาใน memory
+    # อ่านข้อมูลทั้งหมดเข้ามาก่อน
     with open(attendance_file, 'r', encoding='utf-8-sig') as f:
         reader = csv.reader(f)
         next(reader, None) # ข้าม header
-        for row in reader:
+        rows = list(reader) # อ่านทั้งหมดเป็น List
+        
+        # 1. คืนค่าคนทีมาแล้ว (Set)
+        for row in rows:
             if row and len(row) >= 1:
-                # เช็คว่า ID นี้อยู่ใน DB เราไหม (กันคนนอก)
                 if row[0] in STUDENT_DB:
                     present_students.add(row[0])
-    print(f"✅ โหลดข้อมูลเก่า: มาแล้ว {len(present_students)} คน")
+        
+        # 2. คืนค่าประวัติล่าสุด (scan_history) เอาแค่ MAX_HISTORY คนท้ายสุด
+        # ข้อมูลใน csv คือ [id, name, time]
+        valid_rows = [r for r in rows if len(r) >= 3 and r[0] in STUDENT_DB]
+        recent_rows = valid_rows[-MAX_HISTORY:] # ตัดเอาเฉพาะกลุ่มท้ายๆ
+        
+        # ใส่เข้า history แบบกลับด้าน (คนล่าสุดอยู่บนสุด)
+        for row in reversed(recent_rows):
+            scan_history.append({"name": row[1], "time": row[2]})
+            
+    print(f"✅ โหลดข้อมูลเก่า: มาแล้ว {len(present_students)} คน (History: {len(scan_history)})")
 
 def mark_attendance(student_id, name):
-    """บันทึกการมาเรียนลงไฟล์"""
-    # เช็คว่า ID นี้อยู่ในรายชื่อนักเรียนไหม และยังไม่เคยเช็คชื่อวันนี้
+    """บันทึกและอัปเดตประวัติ"""
+    global scan_history
+    
+    # เช็คว่ายังไม่เคยมาวันนี้
     if student_id in STUDENT_DB and student_id not in present_students:
         present_students.add(student_id)
         current_time = datetime.datetime.now().strftime("%H:%M:%S")
         
-        # บันทึกลง CSV (Mode 'a' คือ append ต่อท้าย)
+        # 1. บันทึกลงไฟล์
         try:
             with open(attendance_file, 'a', newline='', encoding='utf-8-sig') as f:
                 writer = csv.writer(f)
@@ -96,6 +114,13 @@ def mark_attendance(student_id, name):
             print(f"💾 บันทึก: {name} เวลา {current_time}")
         except Exception as e:
             print(f"❌ Error บันทึกไฟล์: {e}")
+            
+        # 2. 🔥 เพิ่มลงในประวัติหน้าจอ (คนล่าสุดอยู่ index 0)
+        scan_history.insert(0, {"name": name, "time": current_time})
+        
+        # ถ้าเกินจำนวนที่ตั้งไว้ ให้ลบคนเก่าสุดออก
+        if len(scan_history) > MAX_HISTORY:
+            scan_history.pop()
 
 def on_mouse_click(event, x, y, flags, param):
     global scan_triggered
@@ -124,7 +149,6 @@ if bg_img is None:
 
 bg_img = cv2.resize(bg_img, (1280, 720))
 
-# โหลดข้อมูลการเช็คชื่อของวันนี้
 load_today_attendance()
 
 print("⏳ กำลังโหลด AI...")
@@ -148,7 +172,7 @@ cv2.namedWindow(window_name, cv2.WINDOW_NORMAL)
 cv2.resizeWindow(window_name, 1280, 720) 
 cv2.setMouseCallback(window_name, on_mouse_click)
 
-print("✅ ระบบพร้อม! (Resolution: 1280x720)")
+print("✅ ระบบพร้อม!")
 
 while True:
     frame_display = bg_img.copy()
@@ -186,7 +210,7 @@ while True:
                 color = (0, 255, 0)
                 current_scan_names.append(name)
                 
-                # 🔥 บันทึกการมาเรียน (Save to File)
+                # 🔥 บันทึกการมาเรียน + อัปเดตประวัติหน้าจอ
                 mark_attendance(student_id, name)
                 
             else:
@@ -194,7 +218,7 @@ while True:
                 color = (0, 0, 255)
                 current_scan_names.append(name)
             
-            # วาดกรอบ
+            # วาดกรอบบนภาพ
             box = face.bbox.astype(int)
             cv2.rectangle(frame_full, (box[0], box[1]), (box[2], box[3]), color, 3)
             frame_full = put_thai_text(frame_full, name, (box[0], box[1]-40), (color[2], color[1], color[0]), 40)
@@ -206,7 +230,6 @@ while True:
         elif not faces:
              frame_full = put_thai_text(frame_full, "ไม่พบใบหน้า", (50, 50), (255, 0, 0), 40)
 
-        # ตั้งค่า Freeze
         result_frame = cv2.resize(frame_full, (CAM_W, CAM_H))
         display_cam = result_frame
         result_timer = current_time + SHOW_RESULT_DURATION
@@ -235,7 +258,7 @@ while True:
     cv2.rectangle(frame_display, (BTN_X, BTN_Y), (BTN_X+BTN_W, BTN_Y+BTN_H), (255, 255, 255), 2)
     frame_display = put_thai_text(frame_display, btn_text, (BTN_X + 20, BTN_Y + 10), BTN_TEXT_COLOR, 30)
 
-    # --- C. วาดกล่องคนล่าสุด ---
+    # --- C. วาดกล่องคนล่าสุด (รูปภาพ) ---
     if latest_face_img is not None:
         try:
             face_display = cv2.resize(latest_face_img, (LAST_W, LAST_H))
@@ -245,40 +268,48 @@ while True:
     else:
         cv2.putText(frame_display, "?", (LAST_X + 180, LAST_Y + 180), cv2.FONT_HERSHEY_SIMPLEX, 4, (100, 100, 100), 5)
 
-    info_y_start = LAST_Y + LAST_H + 20
-    if len(latest_names) > 0:
-        for i, name in enumerate(latest_names):
-            y_pos = info_y_start + (i * 25) 
-            if y_pos < frame_display.shape[0] - 50: 
-                display_text = f"{i+1}. {name}"
-                frame_display = put_thai_text(frame_display, display_text, (LAST_X + 20, y_pos + 30), (255, 255, 255), 25)
-        
-        time_y_pos = info_y_start + (len(latest_names) * 45) + 10
-        if latest_time:
-            frame_display = put_thai_text(frame_display, f"เวลา: {latest_time}", (LAST_X + 20, time_y_pos), (200, 200, 200), 25)
+    # 🔥🔥 --- D. แสดงประวัติ 5 คนล่าสุด (History List) --- 🔥🔥
+    # ตำแหน่งเริ่มเขียนข้อความ (ใต้รูปภาพ)
+    info_y_start = LAST_Y + LAST_H + 20 
+    
+    # วาดหัวข้อ
+    # header_text = f"ประวัติ {MAX_HISTORY} คนล่าสุด"
+    # frame_display = put_thai_text(frame_display, header_text, (LAST_X, info_y_start), (0, 255, 255), 28)
+    
+    # วนลูปแสดงรายชื่อจาก scan_history
+    list_y_start = info_y_start + 40
+    if len(scan_history) > 0:
+        for i, item in enumerate(scan_history):
+            # item คือ {'name': 'ชื่อ', 'time': 'เวลา'}
+            display_text = f"{i+1}. {item['name']} ({item['time']})"
+            
+            y_pos = list_y_start + (i * 25) # บรรทัดละ 30 pixel
+            
+            # ตรวจสอบไม่ให้เขียนเกินขอบจอ
+            if y_pos < frame_display.shape[0] - 10:
+                frame_display = put_thai_text(frame_display, display_text, (LAST_X + 10, y_pos), (255, 255, 255), 24)
     else:
-        frame_display = put_thai_text(frame_display, "รอการสแกน...", (LAST_X + 110, info_y_start + 70), (255, 255, 255), 35)
+        frame_display = put_thai_text(frame_display, "- รอการสแกน -", (LAST_X + 20, list_y_start), (200, 200, 200), 24)
 
-    # --- D. ข้อมูลวันที่และเวลา + ตัวนับ (Counter) ---
+
+    # --- E. ข้อมูลวันที่และเวลา + ตัวนับ (Counter) ---
     now = datetime.datetime.now()
     
-    # 1. วันที่
+    # วันที่
     thai_year = now.year + 543
     thai_month = THAI_MONTHS[now.month - 1]
     date_str = f"{now.day} {thai_month} {thai_year}"
     frame_display = put_thai_text(frame_display, date_str, (140, 170), (255, 255, 255), 40)
 
-    # 2. นาฬิกา
+    # นาฬิกา
     time_str = now.strftime("%H:%M:%S")
     cv2.putText(frame_display, time_str, (985, 195), cv2.FONT_HERSHEY_SIMPLEX, 1.5, (255, 255, 255), 4, cv2.LINE_AA)
     
-    # 🔥 3. แสดงจำนวนคนมาเรียน (Counter)
+    # ตัวนับ
     total_students = len(STUDENT_DB)
     present_count = len(present_students)
     count_str = f"{present_count} / {total_students} คน"
     
-    # วาดกรอบพื้นหลังให้ตัวเลขดูเด่นชัด
-
     frame_display = put_thai_text(frame_display, count_str, (585, 165), (255, 255, 255), 55)
 
     cv2.imshow(window_name, frame_display)

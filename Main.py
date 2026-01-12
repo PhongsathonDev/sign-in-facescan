@@ -4,10 +4,12 @@ import datetime
 import pickle
 import sys
 import time
+import csv
+import os
 from insightface.app import FaceAnalysis
 from PIL import ImageFont, ImageDraw, Image
 
-# 🔥 เรียกใช้ข้อมูลจากไฟล์ student_db.py
+# เรียกใช้ข้อมูลจากไฟล์ student_db.py
 from student_db import STUDENT_DB 
 
 # ==========================================
@@ -45,14 +47,56 @@ scan_triggered = False
 result_frame = None         
 result_timer = 0            
 
-# ตัวแปรเก็บข้อมูลคนล่าสุด
-latest_face_img = None      # เก็บรูปภาพเต็มใบ
-latest_names = []           # เก็บรายชื่อทุกคนที่เจอ (List)
+# ตัวแปรเก็บข้อมูลหน้าจอ
+latest_face_img = None      
+latest_names = []           
 latest_time = ""            
+
+# 🔥 ตัวแปรสำหรับเช็คชื่อ
+present_students = set() # เก็บ ID ของคนที่มาแล้ว (ใช้ Set เพื่อไม่ให้ซ้ำ)
+today_str = datetime.datetime.now().strftime("%Y-%m-%d")
+attendance_file = f"attendance_{today_str}.csv" # ชื่อไฟล์บันทึก เช่น attendance_2024-01-15.csv
 
 # ==========================================
 # 🔧 ฟังก์ชันช่วยเหลือ
 # ==========================================
+
+def load_today_attendance():
+    """โหลดข้อมูลการมาเรียนของวันนี้ (กรณีเปิดโปรแกรมใหม่)"""
+    if not os.path.exists(attendance_file):
+        # ถ้ายังไม่มีไฟล์ ให้สร้างและเขียนหัวตาราง
+        with open(attendance_file, 'w', newline='', encoding='utf-8-sig') as f:
+            writer = csv.writer(f)
+            writer.writerow(["Student ID", "Name", "Time"])
+        return
+
+    # ถ้ามีไฟล์แล้ว ให้อ่าน ID เข้ามาใน memory
+    with open(attendance_file, 'r', encoding='utf-8-sig') as f:
+        reader = csv.reader(f)
+        next(reader, None) # ข้าม header
+        for row in reader:
+            if row and len(row) >= 1:
+                # เช็คว่า ID นี้อยู่ใน DB เราไหม (กันคนนอก)
+                if row[0] in STUDENT_DB:
+                    present_students.add(row[0])
+    print(f"✅ โหลดข้อมูลเก่า: มาแล้ว {len(present_students)} คน")
+
+def mark_attendance(student_id, name):
+    """บันทึกการมาเรียนลงไฟล์"""
+    # เช็คว่า ID นี้อยู่ในรายชื่อนักเรียนไหม และยังไม่เคยเช็คชื่อวันนี้
+    if student_id in STUDENT_DB and student_id not in present_students:
+        present_students.add(student_id)
+        current_time = datetime.datetime.now().strftime("%H:%M:%S")
+        
+        # บันทึกลง CSV (Mode 'a' คือ append ต่อท้าย)
+        try:
+            with open(attendance_file, 'a', newline='', encoding='utf-8-sig') as f:
+                writer = csv.writer(f)
+                writer.writerow([student_id, name, current_time])
+            print(f"💾 บันทึก: {name} เวลา {current_time}")
+        except Exception as e:
+            print(f"❌ Error บันทึกไฟล์: {e}")
+
 def on_mouse_click(event, x, y, flags, param):
     global scan_triggered
     if event == cv2.EVENT_LBUTTONDOWN:
@@ -78,8 +122,10 @@ if bg_img is None:
     print(f"❌ ไม่พบไฟล์พื้นหลัง: {BG_IMAGE_PATH}")
     sys.exit()
 
-# ปรับขนาดภาพพื้นหลังให้เป็น 1280x720 ตามต้องการ
 bg_img = cv2.resize(bg_img, (1280, 720))
+
+# โหลดข้อมูลการเช็คชื่อของวันนี้
+load_today_attendance()
 
 print("⏳ กำลังโหลด AI...")
 try:
@@ -99,7 +145,6 @@ cap.set(cv2.CAP_PROP_FRAME_HEIGHT, 480)
 
 window_name = 'Smart Sign-In (Full Option)'
 cv2.namedWindow(window_name, cv2.WINDOW_NORMAL)
-# บังคับขนาดหน้าต่าง
 cv2.resizeWindow(window_name, 1280, 720) 
 cv2.setMouseCallback(window_name, on_mouse_click)
 
@@ -127,8 +172,6 @@ while True:
     # 2. กรณีสั่งสแกน (Scan Triggered)
     elif scan_triggered:
         faces = app.get(frame_full)
-        
-        # สร้าง List ชั่วคราวเพื่อเก็บชื่อในรอบนี้
         current_scan_names = [] 
         
         for face in faces:
@@ -137,23 +180,25 @@ while True:
             best_idx = np.argmax(scores) if len(scores) > 0 else -1
             best_score = scores[best_idx] if len(scores) > 0 else 0
             
-            # --- ตรวจสอบชื่อ ---
             if best_score > SIMILARITY_THRESHOLD:
-                # เรียกใช้ STUDENT_DB ที่ import มา
-                name = STUDENT_DB.get(known_names[best_idx], known_names[best_idx])
+                student_id = known_names[best_idx]
+                name = STUDENT_DB.get(student_id, student_id)
                 color = (0, 255, 0)
                 current_scan_names.append(name)
+                
+                # 🔥 บันทึกการมาเรียน (Save to File)
+                mark_attendance(student_id, name)
+                
             else:
                 name = "ไม่รู้จัก"
                 color = (0, 0, 255)
                 current_scan_names.append(name)
             
-            # วาดกรอบบนภาพหลัก
+            # วาดกรอบ
             box = face.bbox.astype(int)
             cv2.rectangle(frame_full, (box[0], box[1]), (box[2], box[3]), color, 3)
             frame_full = put_thai_text(frame_full, name, (box[0], box[1]-40), (color[2], color[1], color[0]), 40)
 
-        # อัปเดตข้อมูล Global ถ้าเจอคน
         if faces:
             latest_names = current_scan_names 
             latest_face_img = frame_full.copy() 
@@ -161,7 +206,7 @@ while True:
         elif not faces:
              frame_full = put_thai_text(frame_full, "ไม่พบใบหน้า", (50, 50), (255, 0, 0), 40)
 
-        # ตั้งค่า Freeze หน้าจอ
+        # ตั้งค่า Freeze
         result_frame = cv2.resize(frame_full, (CAM_W, CAM_H))
         display_cam = result_frame
         result_timer = current_time + SHOW_RESULT_DURATION
@@ -190,8 +235,7 @@ while True:
     cv2.rectangle(frame_display, (BTN_X, BTN_Y), (BTN_X+BTN_W, BTN_Y+BTN_H), (255, 255, 255), 2)
     frame_display = put_thai_text(frame_display, btn_text, (BTN_X + 20, BTN_Y + 10), BTN_TEXT_COLOR, 30)
 
-    # --- C. วาดกล่องคนล่าสุด (Latest Scan Box) ---
-    # 1. วาดรูปหน้าคน (ภาพเต็มใบ)
+    # --- C. วาดกล่องคนล่าสุด ---
     if latest_face_img is not None:
         try:
             face_display = cv2.resize(latest_face_img, (LAST_W, LAST_H))
@@ -201,9 +245,7 @@ while True:
     else:
         cv2.putText(frame_display, "?", (LAST_X + 180, LAST_Y + 180), cv2.FONT_HERSHEY_SIMPLEX, 4, (100, 100, 100), 5)
 
-    # 2. แสดงรายการชื่อหลายคน
     info_y_start = LAST_Y + LAST_H + 20
-    
     if len(latest_names) > 0:
         for i, name in enumerate(latest_names):
             y_pos = info_y_start + (i * 25) 
@@ -211,25 +253,33 @@ while True:
                 display_text = f"{i+1}. {name}"
                 frame_display = put_thai_text(frame_display, display_text, (LAST_X + 20, y_pos + 30), (255, 255, 255), 25)
         
-        # แสดงเวลา
         time_y_pos = info_y_start + (len(latest_names) * 45) + 10
         if latest_time:
             frame_display = put_thai_text(frame_display, f"เวลา: {latest_time}", (LAST_X + 20, time_y_pos), (200, 200, 200), 25)
     else:
-        frame_display = put_thai_text(frame_display, "รอการสแกน...", (LAST_X + 100, info_y_start + 40), (255, 255, 255), 35)
+        frame_display = put_thai_text(frame_display, "รอการสแกน...", (LAST_X + 110, info_y_start + 70), (255, 255, 255), 35)
 
-    # --- D. แสดงวันที่และเวลาปัจจุบัน ---
+    # --- D. ข้อมูลวันที่และเวลา + ตัวนับ (Counter) ---
     now = datetime.datetime.now()
     
-    # วันที่
+    # 1. วันที่
     thai_year = now.year + 543
     thai_month = THAI_MONTHS[now.month - 1]
     date_str = f"{now.day} {thai_month} {thai_year}"
     frame_display = put_thai_text(frame_display, date_str, (140, 170), (255, 255, 255), 40)
 
-    # นาฬิกา
+    # 2. นาฬิกา
     time_str = now.strftime("%H:%M:%S")
     cv2.putText(frame_display, time_str, (985, 195), cv2.FONT_HERSHEY_SIMPLEX, 1.5, (255, 255, 255), 4, cv2.LINE_AA)
+    
+    # 🔥 3. แสดงจำนวนคนมาเรียน (Counter)
+    total_students = len(STUDENT_DB)
+    present_count = len(present_students)
+    count_str = f"{present_count} / {total_students} คน"
+    
+    # วาดกรอบพื้นหลังให้ตัวเลขดูเด่นชัด
+
+    frame_display = put_thai_text(frame_display, count_str, (585, 165), (255, 255, 255), 55)
 
     cv2.imshow(window_name, frame_display)
 

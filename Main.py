@@ -295,12 +295,12 @@ while True:
     frame_display = put_thai_text(frame_display, date_str, (140, 170), (255, 255, 255), 40)
 
     time_str = now.strftime("%H:%M:%S")
-    cv2.putText(frame_display, time_str, (985, 195), cv2.FONT_HERSHEY_SIMPLEX, 1.5, (255, 255, 255), 4, cv2.LINE_AA)
+    cv2.putText(frame_display, time_str, (985, 195), cv2.FONT_HERSHEY_SIMPLEX, 1.5, (255, 255, 255), 3, cv2.LINE_AA)
     
     total_students = len(STUDENT_DB)
     present_count = len(present_students)
-    count_str = f"{present_count} / {total_students} คน"
-    frame_display = put_thai_text(frame_display, count_str, (585, 165), (255, 255, 255), 55)
+    count_str = f"{present_count} / {total_students}"
+    frame_display = put_thai_text(frame_display, count_str, (582, 165), (255, 255, 255), 50)
 
     cv2.imshow(window_name, frame_display)
 

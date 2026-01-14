@@ -90,7 +90,11 @@ def load_today_attendance():
     print(f"✅ โหลดข้อมูลเก่า: มาแล้ว {len(present_students)} คน (History: {len(scan_history)})")
 
 def mark_attendance(student_id, name):
-    """บันทึกและอัปเดตประวัติ"""
+    """
+    บันทึกและอัปเดตประวัติ 
+    Return: True ถ้าเป็นการบันทึกครั้งแรกของวัน (New Record)
+    Return: False ถ้าเคยมาแล้ว
+    """
     global scan_history
     
     # เช็คว่ายังไม่เคยมาวันนี้
@@ -110,8 +114,9 @@ def mark_attendance(student_id, name):
         if len(scan_history) > MAX_HISTORY:
             scan_history.pop()
         
-        return True 
-    return False
+        return True # ✅ เป็นคนใหม่ (ครั้งแรกของวัน)
+    
+    return False # ❌ เคยมาแล้ว
 
 def put_thai_text(img, text, position, color, font_size):
     img_pil = Image.fromarray(cv2.cvtColor(img, cv2.COLOR_BGR2RGB))
@@ -140,8 +145,8 @@ def process_scan_thread():
             img_scan = frame_to_process.copy()
             faces = app.get(img_scan)
             
-            # 🔥 ตัวแปรเช็คว่ารอบนี้เจอคนรู้จักไหม
-            found_known_person = False 
+            # 🔥 ตัวแปรเช็คว่ารอบนี้ "เจอคนใหม่" (New Record) หรือไม่
+            found_new_person = False 
             current_scan_names = []
             
             if len(faces) > 0:
@@ -152,29 +157,29 @@ def process_scan_thread():
                     best_score = scores[best_idx] if len(scores) > 0 else 0
                     
                     if best_score > SIMILARITY_THRESHOLD:
-                        # ✅ เจอคนรู้จัก
-                        found_known_person = True  # ปักธงว่าเจอคนรู้จัก
-                        
                         student_id = known_names[best_idx]
                         name = STUDENT_DB.get(student_id, student_id)
                         color = (0, 255, 0)
                         current_scan_names.append(name)
                         
-                        mark_attendance(student_id, name)
+                        # เช็คว่าเป็นคนใหม่หรือไม่?
+                        is_new_record = mark_attendance(student_id, name)
+                        
+                        if is_new_record:
+                            found_new_person = True # ✅ ถ้าเป็นคนใหม่ ให้ปักธงอัปเดตรูป
                         
                     else:
-                        # ❌ ไม่รู้จัก (ข้าม ไม่ปักธง)
                         name = "ไม่รู้จัก"
                         color = (0, 0, 255)
                         current_scan_names.append(name)
                     
-                    # วาดกรอบเตรียมไว้ (เผื่อต้องใช้ภาพนี้)
+                    # วาดกรอบเตรียมไว้
                     box = face.bbox.astype(int)
                     cv2.rectangle(img_scan, (box[0], box[1]), (box[2], box[3]), color, 3)
                     img_scan = put_thai_text(img_scan, name, (box[0], box[1]-40), (color[2], color[1], color[0]), 40)
             
-                # 🔥 อัปเดตกล่องขวา "เฉพาะเมื่อเจอคนรู้จัก" (found_known_person == True)
-                if found_known_person:
+                # 🔥 อัปเดตกล่องขวา "เฉพาะเมื่อเจอคนใหม่ (First Time Scan)" เท่านั้น
+                if found_new_person:
                     latest_names = current_scan_names 
                     latest_face_img = img_scan.copy() 
                     latest_time = datetime.datetime.now().strftime("%H:%M:%S")
@@ -220,7 +225,7 @@ cv2.resizeWindow(window_name, 1280, 720)
 t = threading.Thread(target=process_scan_thread, daemon=True)
 t.start()
 
-print("✅ ระบบพร้อม! (Auto Mode - Show Known Only)")
+print("✅ ระบบพร้อม! (Auto Mode - Show First Time Only)")
 
 while True:
     frame_display = bg_img.copy()

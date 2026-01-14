@@ -6,6 +6,7 @@ import sys
 import time
 import csv
 import os
+import threading  
 from insightface.app import FaceAnalysis
 from PIL import ImageFont, ImageDraw, Image
 
@@ -39,16 +40,8 @@ LAST_X, LAST_Y = 840, 250
 LAST_W, LAST_H = 410, 260  
 TEXT_OFFSET_Y = 40         
 
-# 🔥 [เพิ่ม] จำนวนคนล่าสุดที่จะแสดง (ปรับแก้ตรงนี้ได้เลย)
 MAX_HISTORY = 5 
-
 SIMILARITY_THRESHOLD = 0.40
-SHOW_RESULT_DURATION = 3
-
-# ตัวแปรสถานะระบบ
-scan_triggered = False      
-result_frame = None         
-result_timer = 0            
 
 # ตัวแปรเก็บข้อมูลหน้าจอ
 latest_face_img = None      
@@ -57,9 +50,13 @@ latest_time = ""
 
 # 🔥 ตัวแปรสำหรับเช็คชื่อและประวัติ
 present_students = set() 
-scan_history = []  # เก็บประวัติคนล่าสุด [{'name':..., 'time':...}, ...]
+scan_history = [] 
 today_str = datetime.datetime.now().strftime("%Y-%m-%d")
 attendance_file = f"attendance_{today_str}.csv" 
+
+# 🔥 ตัวแปรสำหรับ Thread (Scan อัตโนมัติ)
+frame_to_process = None  
+scan_running = True      
 
 # ==========================================
 # 🔧 ฟังก์ชันช่วยเหลือ
@@ -74,24 +71,19 @@ def load_today_attendance():
             writer.writerow(["Student ID", "Name", "Time"])
         return
 
-    # อ่านข้อมูลทั้งหมดเข้ามาก่อน
     with open(attendance_file, 'r', encoding='utf-8-sig') as f:
         reader = csv.reader(f)
-        next(reader, None) # ข้าม header
-        rows = list(reader) # อ่านทั้งหมดเป็น List
+        next(reader, None)
+        rows = list(reader)
         
-        # 1. คืนค่าคนทีมาแล้ว (Set)
         for row in rows:
             if row and len(row) >= 1:
                 if row[0] in STUDENT_DB:
                     present_students.add(row[0])
         
-        # 2. คืนค่าประวัติล่าสุด (scan_history) เอาแค่ MAX_HISTORY คนท้ายสุด
-        # ข้อมูลใน csv คือ [id, name, time]
         valid_rows = [r for r in rows if len(r) >= 3 and r[0] in STUDENT_DB]
-        recent_rows = valid_rows[-MAX_HISTORY:] # ตัดเอาเฉพาะกลุ่มท้ายๆ
+        recent_rows = valid_rows[-MAX_HISTORY:]
         
-        # ใส่เข้า history แบบกลับด้าน (คนล่าสุดอยู่บนสุด)
         for row in reversed(recent_rows):
             scan_history.append({"name": row[1], "time": row[2]})
             
@@ -106,7 +98,6 @@ def mark_attendance(student_id, name):
         present_students.add(student_id)
         current_time = datetime.datetime.now().strftime("%H:%M:%S")
         
-        # 1. บันทึกลงไฟล์
         try:
             with open(attendance_file, 'a', newline='', encoding='utf-8-sig') as f:
                 writer = csv.writer(f)
@@ -115,19 +106,12 @@ def mark_attendance(student_id, name):
         except Exception as e:
             print(f"❌ Error บันทึกไฟล์: {e}")
             
-        # 2. 🔥 เพิ่มลงในประวัติหน้าจอ (คนล่าสุดอยู่ index 0)
         scan_history.insert(0, {"name": name, "time": current_time})
-        
-        # ถ้าเกินจำนวนที่ตั้งไว้ ให้ลบคนเก่าสุดออก
         if len(scan_history) > MAX_HISTORY:
             scan_history.pop()
-
-def on_mouse_click(event, x, y, flags, param):
-    global scan_triggered
-    if event == cv2.EVENT_LBUTTONDOWN:
-        if BTN_X <= x <= BTN_X + BTN_W and BTN_Y <= y <= BTN_Y + BTN_H:
-            scan_triggered = True
-            print("🖱️ Button Clicked! Scanning...")
+        
+        return True 
+    return False
 
 def put_thai_text(img, text, position, color, font_size):
     img_pil = Image.fromarray(cv2.cvtColor(img, cv2.COLOR_BGR2RGB))
@@ -138,6 +122,67 @@ def put_thai_text(img, text, position, color, font_size):
         font = ImageFont.load_default()
     draw.text(position, text, font=font, fill=color)
     return cv2.cvtColor(np.array(img_pil), cv2.COLOR_RGB2BGR)
+
+# ==========================================
+# 🧠 ฟังก์ชันสแกนหน้าเบื้องหลัง (Thread Function)
+# ==========================================
+def process_scan_thread():
+    global latest_face_img, latest_names, latest_time
+    
+    print("🚀 Background Scan Started...")
+    
+    while scan_running:
+        if frame_to_process is None:
+            time.sleep(0.1)
+            continue
+            
+        try:
+            img_scan = frame_to_process.copy()
+            faces = app.get(img_scan)
+            
+            # 🔥 ตัวแปรเช็คว่ารอบนี้เจอคนรู้จักไหม
+            found_known_person = False 
+            current_scan_names = []
+            
+            if len(faces) > 0:
+                for face in faces:
+                    emb = face.embedding / np.linalg.norm(face.embedding)
+                    scores = np.dot(known_embeds, emb) if len(known_embeds) > 0 else []
+                    best_idx = np.argmax(scores) if len(scores) > 0 else -1
+                    best_score = scores[best_idx] if len(scores) > 0 else 0
+                    
+                    if best_score > SIMILARITY_THRESHOLD:
+                        # ✅ เจอคนรู้จัก
+                        found_known_person = True  # ปักธงว่าเจอคนรู้จัก
+                        
+                        student_id = known_names[best_idx]
+                        name = STUDENT_DB.get(student_id, student_id)
+                        color = (0, 255, 0)
+                        current_scan_names.append(name)
+                        
+                        mark_attendance(student_id, name)
+                        
+                    else:
+                        # ❌ ไม่รู้จัก (ข้าม ไม่ปักธง)
+                        name = "ไม่รู้จัก"
+                        color = (0, 0, 255)
+                        current_scan_names.append(name)
+                    
+                    # วาดกรอบเตรียมไว้ (เผื่อต้องใช้ภาพนี้)
+                    box = face.bbox.astype(int)
+                    cv2.rectangle(img_scan, (box[0], box[1]), (box[2], box[3]), color, 3)
+                    img_scan = put_thai_text(img_scan, name, (box[0], box[1]-40), (color[2], color[1], color[0]), 40)
+            
+                # 🔥 อัปเดตกล่องขวา "เฉพาะเมื่อเจอคนรู้จัก" (found_known_person == True)
+                if found_known_person:
+                    latest_names = current_scan_names 
+                    latest_face_img = img_scan.copy() 
+                    latest_time = datetime.datetime.now().strftime("%H:%M:%S")
+
+        except Exception as e:
+            print(f"Error in thread: {e}")
+
+        time.sleep(1)
 
 # ==========================================
 # 🚀 เริ่มต้นระบบ
@@ -167,12 +212,15 @@ cap = cv2.VideoCapture(0)
 cap.set(cv2.CAP_PROP_FRAME_WIDTH, 640)
 cap.set(cv2.CAP_PROP_FRAME_HEIGHT, 480)
 
-window_name = 'Smart Sign-In (Full Option)'
+window_name = 'Smart Sign-In (Auto Scan)'
 cv2.namedWindow(window_name, cv2.WINDOW_NORMAL)
 cv2.resizeWindow(window_name, 1280, 720) 
-cv2.setMouseCallback(window_name, on_mouse_click)
 
-print("✅ ระบบพร้อม!")
+# --- เริ่มต้น Thread ---
+t = threading.Thread(target=process_scan_thread, daemon=True)
+t.start()
+
+print("✅ ระบบพร้อม! (Auto Mode - Show Known Only)")
 
 while True:
     frame_display = bg_img.copy()
@@ -180,83 +228,21 @@ while True:
     ret, frame_full = cap.read()
     if not ret: break
 
-    current_time = time.time()
+    frame_to_process = frame_full.copy()
 
     # =========================================
-    # ส่วนประมวลผล (Processing Logic)
-    # =========================================
-    
-    # 1. กรณีแสดงผลค้าง (Freeze)
-    if result_frame is not None and current_time < result_timer:
-        display_cam = result_frame
-        time_left = int(result_timer - current_time)
-        btn_text = f"โชว์ผลอีก {time_left} วิ"
-        btn_bg = (100, 100, 100)
-
-    # 2. กรณีสั่งสแกน (Scan Triggered)
-    elif scan_triggered:
-        faces = app.get(frame_full)
-        current_scan_names = [] 
-        
-        for face in faces:
-            emb = face.embedding / np.linalg.norm(face.embedding)
-            scores = np.dot(known_embeds, emb) if len(known_embeds) > 0 else []
-            best_idx = np.argmax(scores) if len(scores) > 0 else -1
-            best_score = scores[best_idx] if len(scores) > 0 else 0
-            
-            if best_score > SIMILARITY_THRESHOLD:
-                student_id = known_names[best_idx]
-                name = STUDENT_DB.get(student_id, student_id)
-                color = (0, 255, 0)
-                current_scan_names.append(name)
-                
-                # 🔥 บันทึกการมาเรียน + อัปเดตประวัติหน้าจอ
-                mark_attendance(student_id, name)
-                
-            else:
-                name = "ไม่รู้จัก"
-                color = (0, 0, 255)
-                current_scan_names.append(name)
-            
-            # วาดกรอบบนภาพ
-            box = face.bbox.astype(int)
-            cv2.rectangle(frame_full, (box[0], box[1]), (box[2], box[3]), color, 3)
-            frame_full = put_thai_text(frame_full, name, (box[0], box[1]-40), (color[2], color[1], color[0]), 40)
-
-        if faces:
-            latest_names = current_scan_names 
-            latest_face_img = frame_full.copy() 
-            latest_time = datetime.datetime.now().strftime("%H:%M:%S")
-        elif not faces:
-             frame_full = put_thai_text(frame_full, "ไม่พบใบหน้า", (50, 50), (255, 0, 0), 40)
-
-        result_frame = cv2.resize(frame_full, (CAM_W, CAM_H))
-        display_cam = result_frame
-        result_timer = current_time + SHOW_RESULT_DURATION
-        scan_triggered = False
-        btn_text = "เรียบร้อย!"
-        btn_bg = (0, 100, 0)
-
-    # 3. โหมดปกติ (Live View)
-    else:
-        display_cam = cv2.resize(frame_full, (CAM_W, CAM_H))
-        result_frame = None
-        btn_text = "คลิกเพื่อสแกนใบหน้า"
-        btn_bg = BTN_COLOR
-
-    # =========================================
-    # ส่วนวาดหน้าจอ (Drawing Logic)
+    # ส่วนวาดหน้าจอ
     # =========================================
 
     # --- A. วาดกล้องหลัก ---
+    display_cam = cv2.resize(frame_full, (CAM_W, CAM_H))
     if CAM_Y + CAM_H <= frame_display.shape[0] and CAM_X + CAM_W <= frame_display.shape[1]:
         frame_display[CAM_Y:CAM_Y+CAM_H, CAM_X:CAM_X+CAM_W] = display_cam
         cv2.rectangle(frame_display, (CAM_X-2, CAM_Y-2), (CAM_X+CAM_W+2, CAM_Y+CAM_H+2), (255, 255, 255), 2)
 
-    # --- B. วาดปุ่มกด ---
-    cv2.rectangle(frame_display, (BTN_X, BTN_Y), (BTN_X+BTN_W, BTN_Y+BTN_H), btn_bg, -1)
-    cv2.rectangle(frame_display, (BTN_X, BTN_Y), (BTN_X+BTN_W, BTN_Y+BTN_H), (255, 255, 255), 2)
-    frame_display = put_thai_text(frame_display, btn_text, (BTN_X + 20, BTN_Y + 10), BTN_TEXT_COLOR, 30)
+    # --- B. สถานะ ---
+    cv2.rectangle(frame_display, (BTN_X, BTN_Y), (BTN_X+BTN_W, BTN_Y+BTN_H), (0, 100, 0), -1)
+    frame_display = put_thai_text(frame_display, "ระบบสแกนอัตโนมัติ", (BTN_X + 25, BTN_Y + 10), (255, 255, 255), 30)
 
     # --- C. วาดกล่องคนล่าสุด (รูปภาพ) ---
     if latest_face_img is not None:
@@ -264,57 +250,42 @@ while True:
             face_display = cv2.resize(latest_face_img, (LAST_W, LAST_H))
             frame_display[LAST_Y:LAST_Y+LAST_H, LAST_X:LAST_X+LAST_W] = face_display
         except Exception as e:
-            print(f"Error drawing face: {e}")
+            pass
     else:
         cv2.putText(frame_display, "?", (LAST_X + 180, LAST_Y + 180), cv2.FONT_HERSHEY_SIMPLEX, 4, (100, 100, 100), 5)
 
-    # 🔥🔥 --- D. แสดงประวัติ 5 คนล่าสุด (History List) --- 🔥🔥
-    # ตำแหน่งเริ่มเขียนข้อความ (ใต้รูปภาพ)
+    # --- D. รายชื่อ --- 
     info_y_start = LAST_Y + LAST_H + 20 
-    
-    # วาดหัวข้อ
-    # header_text = f"ประวัติ {MAX_HISTORY} คนล่าสุด"
-    # frame_display = put_thai_text(frame_display, header_text, (LAST_X, info_y_start), (0, 255, 255), 28)
-    
-    # วนลูปแสดงรายชื่อจาก scan_history
     list_y_start = info_y_start + 40
+    
     if len(scan_history) > 0:
         for i, item in enumerate(scan_history):
-            # item คือ {'name': 'ชื่อ', 'time': 'เวลา'}
             display_text = f"{i+1}. {item['name']} ({item['time']})"
-            
-            y_pos = list_y_start + (i * 25) # บรรทัดละ 30 pixel
-            
-            # ตรวจสอบไม่ให้เขียนเกินขอบจอ
+            y_pos = list_y_start + (i * 25)
             if y_pos < frame_display.shape[0] - 10:
                 frame_display = put_thai_text(frame_display, display_text, (LAST_X + 10, y_pos), (255, 255, 255), 24)
     else:
         frame_display = put_thai_text(frame_display, "- รอการสแกน -", (LAST_X + 20, list_y_start), (200, 200, 200), 24)
 
-
-    # --- E. ข้อมูลวันที่และเวลา + ตัวนับ (Counter) ---
+    # --- E. วันที่เวลา ---
     now = datetime.datetime.now()
-    
-    # วันที่
     thai_year = now.year + 543
     thai_month = THAI_MONTHS[now.month - 1]
     date_str = f"{now.day} {thai_month} {thai_year}"
     frame_display = put_thai_text(frame_display, date_str, (140, 170), (255, 255, 255), 40)
 
-    # นาฬิกา
     time_str = now.strftime("%H:%M:%S")
     cv2.putText(frame_display, time_str, (985, 195), cv2.FONT_HERSHEY_SIMPLEX, 1.5, (255, 255, 255), 4, cv2.LINE_AA)
     
-    # ตัวนับ
     total_students = len(STUDENT_DB)
     present_count = len(present_students)
     count_str = f"{present_count} / {total_students} คน"
-    
     frame_display = put_thai_text(frame_display, count_str, (585, 165), (255, 255, 255), 55)
 
     cv2.imshow(window_name, frame_display)
 
     if cv2.waitKey(1) & 0xFF == ord('q'):
+        scan_running = False 
         break
 
 cap.release()

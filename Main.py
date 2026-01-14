@@ -19,6 +19,7 @@ from student_db import STUDENT_DB
 BG_IMAGE_PATH = 'D:\\Work\\sign-in-facescan\\bg.jpg'
 DATABASE_PATH = 'database/faces_data.pkl'
 FONT_PATH = "c:\\WINDOWS\\Fonts\\UPCJB.TTF" 
+CAPTURE_DIR = "captured_images"  # 📁 ชื่อโฟลเดอร์หลักสำหรับเก็บภาพ
 
 THAI_MONTHS = [
     "มกราคม", "กุมภาพันธ์", "มีนาคม", "เมษายน", "พฤษภาคม", "มิถุนายน",
@@ -68,7 +69,6 @@ def load_today_attendance():
     if not os.path.exists(attendance_file):
         with open(attendance_file, 'w', newline='', encoding='utf-8-sig') as f:
             writer = csv.writer(f)
-            # --- แก้ไข: เพิ่มหัวข้อ "Date" ---
             writer.writerow(["Student ID", "Name", "Class", "Date", "Time"])
         return
 
@@ -82,12 +82,10 @@ def load_today_attendance():
                 if row[0] in STUDENT_DB:
                     present_students.add(row[0])
         
-        # --- แก้ไข: เช็ค len >= 5 (เพราะมี 5 คอลัมน์แล้ว) ---
         valid_rows = [r for r in rows if len(r) >= 5 and r[0] in STUDENT_DB]
         recent_rows = valid_rows[-MAX_HISTORY:]
         
         for row in reversed(recent_rows):
-            # Time จะขยับไปอยู่ที่ index 4 (0=ID, 1=Name, 2=Class, 3=Date, 4=Time)
             scan_history.append({"name": row[1], "time": row[4]})
             
     print(f"✅ โหลดข้อมูลเก่า: มาแล้ว {len(present_students)} คน (History: {len(scan_history)})")
@@ -102,19 +100,17 @@ def mark_attendance(student_id, name, student_class):
     if student_id in STUDENT_DB and student_id not in present_students:
         present_students.add(student_id)
         
-        # --- แก้ไข: สร้างตัวแปรวันที่และเวลา ---
         now = datetime.datetime.now()
-        current_date = now.strftime("%Y-%m-%d") # เช่น 2026-01-14
-        current_time = now.strftime("%H:%M:%S") # เช่น 08:30:00
+        current_date = now.strftime("%Y-%m-%d") 
+        current_time = now.strftime("%H:%M:%S") 
         
         try:
             with open(attendance_file, 'a', newline='', encoding='utf-8-sig') as f:
                 writer = csv.writer(f)
-                # --- แก้ไข: บันทึก Date ลงไปด้วย ---
                 writer.writerow([student_id, name, student_class, current_date, current_time])
-            print(f"💾 บันทึก: {name} วันที่ {current_date} เวลา {current_time}")
+            print(f"💾 บันทึก CSV: {name} วันที่ {current_date} เวลา {current_time}")
         except Exception as e:
-            print(f"❌ Error บันทึกไฟล์: {e}")
+            print(f"❌ Error บันทึกไฟล์ CSV: {e}")
             
         scan_history.insert(0, {"name": name, "time": current_time})
         if len(scan_history) > MAX_HISTORY:
@@ -164,16 +160,13 @@ def process_scan_thread():
                     if best_score > SIMILARITY_THRESHOLD:
                         student_id = known_names[best_idx]
                         
-                        # --- ส่วนที่แก้ไข: ดึงข้อมูลแบบ Dict ---
                         student_info = STUDENT_DB.get(student_id, {})
                         if isinstance(student_info, dict):
                             name = student_info.get("name", student_id)
                             student_class = student_info.get("class", "-")
                         else:
-                            # เผื่อกรณียังมีข้อมูลเก่าที่เป็น string
                             name = str(student_info)
                             student_class = "-"
-                        # ------------------------------------
 
                         color = (0, 255, 0)
                         current_scan_names.append(name)
@@ -198,6 +191,39 @@ def process_scan_thread():
                     latest_names = current_scan_names 
                     latest_face_img = img_scan.copy() 
                     latest_time = datetime.datetime.now().strftime("%H:%M:%S")
+
+                    # ======================================================
+                    # 📸 เพิ่มโค้ดส่วนนี้: บันทึกรูปภาพลงโฟลเดอร์ตามวันที่
+                    # ======================================================
+                    try:
+                        # 1. สร้างชื่อโฟลเดอร์ตามวันที่ (เช่น captured_images/2026-01-14)
+                        folder_date = datetime.datetime.now().strftime("%Y-%m-%d")
+                        save_path = os.path.join(CAPTURE_DIR, folder_date)
+                        
+                        if not os.path.exists(save_path):
+                            os.makedirs(save_path) # สร้างโฟลเดอร์ถ้ายังไม่มี
+                        
+                        # 2. สร้างชื่อไฟล์จาก เวลา + ชื่อคน (เช่น 08-30-00_นายA.jpg)
+                        # ดึงเฉพาะชื่อแรกของแต่ละคนที่สแกนเจอมาเป็นชื่อไฟล์
+                        safe_names = "_".join([n.split(" ")[0] for n in current_scan_names if n != "ไม่รู้จัก"])
+                        if not safe_names: safe_names = "unknown"
+                        
+                        timestamp = datetime.datetime.now().strftime("%H-%M-%S")
+                        filename = f"{timestamp}_{safe_names}.jpg"
+                        
+                        full_file_path = os.path.join(save_path, filename)
+                        
+                        # 3. บันทึกไฟล์ (แก้ปัญหาชื่อไทยเพี้ยน)
+                        is_success, im_buf_arr = cv2.imencode(".jpg", latest_face_img)
+                        if is_success:
+                            im_buf_arr.tofile(full_file_path)
+                            print(f"📸 Saved image: {full_file_path}")
+                        else:
+                            print("❌ Save Image Failed")
+                        
+                    except Exception as e:
+                        print(f"❌ Save Image Error: {e}")
+                    # ======================================================
 
         except Exception as e:
             print(f"Error in thread: {e}")
@@ -259,10 +285,6 @@ while True:
     if CAM_Y + CAM_H <= frame_display.shape[0] and CAM_X + CAM_W <= frame_display.shape[1]:
         frame_display[CAM_Y:CAM_Y+CAM_H, CAM_X:CAM_X+CAM_W] = display_cam
         cv2.rectangle(frame_display, (CAM_X-2, CAM_Y-2), (CAM_X+CAM_W+2, CAM_Y+CAM_H+2), (255, 255, 255), 2)
-
-    # --- B. สถานะ ---
-    # cv2.rectangle(frame_display, (BTN_X, BTN_Y), (BTN_X+BTN_W, BTN_Y+BTN_H), (0, 100, 0), -1)
-    # frame_display = put_thai_text(frame_display, "ระบบสแกนอัตโนมัติ", (BTN_X + 25, BTN_Y + 10), (255, 255, 255), 30)
 
     # --- C. วาดกล่องคนล่าสุด (รูปภาพ) ---
     if latest_face_img is not None:

@@ -261,8 +261,8 @@ while True:
         cv2.rectangle(frame_display, (CAM_X-2, CAM_Y-2), (CAM_X+CAM_W+2, CAM_Y+CAM_H+2), (255, 255, 255), 2)
 
     # --- B. สถานะ ---
-    cv2.rectangle(frame_display, (BTN_X, BTN_Y), (BTN_X+BTN_W, BTN_Y+BTN_H), (0, 100, 0), -1)
-    frame_display = put_thai_text(frame_display, "ระบบสแกนอัตโนมัติ", (BTN_X + 25, BTN_Y + 10), (255, 255, 255), 30)
+    # cv2.rectangle(frame_display, (BTN_X, BTN_Y), (BTN_X+BTN_W, BTN_Y+BTN_H), (0, 100, 0), -1)
+    # frame_display = put_thai_text(frame_display, "ระบบสแกนอัตโนมัติ", (BTN_X + 25, BTN_Y + 10), (255, 255, 255), 30)
 
     # --- C. วาดกล่องคนล่าสุด (รูปภาพ) ---
     if latest_face_img is not None:

@@ -68,7 +68,8 @@ def load_today_attendance():
     if not os.path.exists(attendance_file):
         with open(attendance_file, 'w', newline='', encoding='utf-8-sig') as f:
             writer = csv.writer(f)
-            writer.writerow(["Student ID", "Name", "Time"])
+            # --- แก้ไข: เพิ่มหัวข้อ "Date" ---
+            writer.writerow(["Student ID", "Name", "Class", "Date", "Time"])
         return
 
     with open(attendance_file, 'r', encoding='utf-8-sig') as f:
@@ -81,32 +82,37 @@ def load_today_attendance():
                 if row[0] in STUDENT_DB:
                     present_students.add(row[0])
         
-        valid_rows = [r for r in rows if len(r) >= 3 and r[0] in STUDENT_DB]
+        # --- แก้ไข: เช็ค len >= 5 (เพราะมี 5 คอลัมน์แล้ว) ---
+        valid_rows = [r for r in rows if len(r) >= 5 and r[0] in STUDENT_DB]
         recent_rows = valid_rows[-MAX_HISTORY:]
         
         for row in reversed(recent_rows):
-            scan_history.append({"name": row[1], "time": row[2]})
+            # Time จะขยับไปอยู่ที่ index 4 (0=ID, 1=Name, 2=Class, 3=Date, 4=Time)
+            scan_history.append({"name": row[1], "time": row[4]})
             
     print(f"✅ โหลดข้อมูลเก่า: มาแล้ว {len(present_students)} คน (History: {len(scan_history)})")
 
-def mark_attendance(student_id, name):
+def mark_attendance(student_id, name, student_class):
     """
-    บันทึกและอัปเดตประวัติ 
-    Return: True ถ้าเป็นการบันทึกครั้งแรกของวัน (New Record)
-    Return: False ถ้าเคยมาแล้ว
+    บันทึกและอัปเดตประวัติ พร้อมวันที่
     """
     global scan_history
     
     # เช็คว่ายังไม่เคยมาวันนี้
     if student_id in STUDENT_DB and student_id not in present_students:
         present_students.add(student_id)
-        current_time = datetime.datetime.now().strftime("%H:%M:%S")
+        
+        # --- แก้ไข: สร้างตัวแปรวันที่และเวลา ---
+        now = datetime.datetime.now()
+        current_date = now.strftime("%Y-%m-%d") # เช่น 2026-01-14
+        current_time = now.strftime("%H:%M:%S") # เช่น 08:30:00
         
         try:
             with open(attendance_file, 'a', newline='', encoding='utf-8-sig') as f:
                 writer = csv.writer(f)
-                writer.writerow([student_id, name, current_time])
-            print(f"💾 บันทึก: {name} เวลา {current_time}")
+                # --- แก้ไข: บันทึก Date ลงไปด้วย ---
+                writer.writerow([student_id, name, student_class, current_date, current_time])
+            print(f"💾 บันทึก: {name} วันที่ {current_date} เวลา {current_time}")
         except Exception as e:
             print(f"❌ Error บันทึกไฟล์: {e}")
             
@@ -114,9 +120,9 @@ def mark_attendance(student_id, name):
         if len(scan_history) > MAX_HISTORY:
             scan_history.pop()
         
-        return True # ✅ เป็นคนใหม่ (ครั้งแรกของวัน)
+        return True 
     
-    return False # ❌ เคยมาแล้ว
+    return False
 
 def put_thai_text(img, text, position, color, font_size):
     img_pil = Image.fromarray(cv2.cvtColor(img, cv2.COLOR_BGR2RGB))
@@ -145,7 +151,6 @@ def process_scan_thread():
             img_scan = frame_to_process.copy()
             faces = app.get(img_scan)
             
-            # 🔥 ตัวแปรเช็คว่ารอบนี้ "เจอคนใหม่" (New Record) หรือไม่
             found_new_person = False 
             current_scan_names = []
             
@@ -158,27 +163,37 @@ def process_scan_thread():
                     
                     if best_score > SIMILARITY_THRESHOLD:
                         student_id = known_names[best_idx]
-                        name = STUDENT_DB.get(student_id, student_id)
+                        
+                        # --- ส่วนที่แก้ไข: ดึงข้อมูลแบบ Dict ---
+                        student_info = STUDENT_DB.get(student_id, {})
+                        if isinstance(student_info, dict):
+                            name = student_info.get("name", student_id)
+                            student_class = student_info.get("class", "-")
+                        else:
+                            # เผื่อกรณียังมีข้อมูลเก่าที่เป็น string
+                            name = str(student_info)
+                            student_class = "-"
+                        # ------------------------------------
+
                         color = (0, 255, 0)
                         current_scan_names.append(name)
                         
-                        # เช็คว่าเป็นคนใหม่หรือไม่?
-                        is_new_record = mark_attendance(student_id, name)
+                        # ส่ง student_class ไปบันทึกด้วย
+                        is_new_record = mark_attendance(student_id, name, student_class)
                         
                         if is_new_record:
-                            found_new_person = True # ✅ ถ้าเป็นคนใหม่ ให้ปักธงอัปเดตรูป
+                            found_new_person = True
                         
                     else:
                         name = "ไม่รู้จัก"
                         color = (0, 0, 255)
                         current_scan_names.append(name)
                     
-                    # วาดกรอบเตรียมไว้
+                    # วาดกรอบ
                     box = face.bbox.astype(int)
                     cv2.rectangle(img_scan, (box[0], box[1]), (box[2], box[3]), color, 3)
                     img_scan = put_thai_text(img_scan, name, (box[0], box[1]-40), (color[2], color[1], color[0]), 40)
             
-                # 🔥 อัปเดตกล่องขวา "เฉพาะเมื่อเจอคนใหม่ (First Time Scan)" เท่านั้น
                 if found_new_person:
                     latest_names = current_scan_names 
                     latest_face_img = img_scan.copy() 

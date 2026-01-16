@@ -51,6 +51,10 @@ def send_csv_to_gas():
         total_rows = len(df)
         sent_rows = get_sent_count(CSV_FILE_PATH)
 
+        if total_rows < sent_rows:
+            print("⚠️ ตรวจพบการรีเซ็ตไฟล์ CSV -> เริ่มนับหนึ่งใหม่")
+            sent_rows = 0
+
         # 2. เช็คว่ามีข้อมูลใหม่ไหม
         if total_rows <= sent_rows:
             print(f"✅ ข้อมูลล่าสุด {total_rows} แถว ถูกส่งไปหมดแล้ว (ไม่ต้องส่งซ้ำ)")

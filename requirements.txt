@@ -1,0 +1,8 @@
+opencv-python
+numpy
+insightface
+onnxruntime
+Pillow
+pandas
+requests
+firebase-admin

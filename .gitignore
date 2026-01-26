@@ -209,3 +209,10 @@ captured_images/
 
 *.csv
 *.json
+
+# .gitignore
+.env
+.env.local
+.env.*.local
+node_modules/
+dist/

@@ -1,42 +1,190 @@
+/* src/App.css */
+:root {
+  --primary-color: #6B46C1;
+  /* ม่วงกลาง */
+  --primary-dark: #553C9A;
+  /* ม่วงเข้ม */
+  --bg-color: #1A202C;
+  /* พื้นหลังมืดเกือบดำ */
+  --card-bg: #2D3748;
+  /* พื้นหลังการ์ด */
+  --text-white: #F7FAFC;
+  --text-gray: #A0AEC0;
+}
+
+body {
+  margin: 0;
+  font-family: 'Sarabun', sans-serif;
+  background-color: var(--bg-color);
+  color: var(--text-white);
+  min-height: 100vh;
+  display: flex;
+  justify-content: center;
+}
+
 #root {
-  max-width: 1280px;
-  margin: 0 auto;
-  padding: 2rem;
+  width: 100%;
+}
+
+/* Container รวม */
+.app-container {
+  display: flex;
+  justify-content: center;
+  align-items: center;
+  min-height: 100vh;
+  width: 100%;
+  padding: 20px;
+  box-sizing: border-box;
+}
+
+/* --- Login Styles --- */
+.login-card {
+  background: var(--card-bg);
+  padding: 3rem;
+  border-radius: 16px;
+  box-shadow: 0 10px 25px rgba(0, 0, 0, 0.5);
   text-align: center;
+  width: 100%;
+  max-width: 400px;
+  border: 1px solid #4A5568;
 }
 
-.logo {
-  height: 6em;
-  padding: 1.5em;
-  will-change: filter;
-  transition: filter 300ms;
-}
-.logo:hover {
-  filter: drop-shadow(0 0 2em #646cffaa);
-}
-.logo.react:hover {
-  filter: drop-shadow(0 0 2em #61dafbaa);
+.icon-header {
+  font-size: 3rem;
+  margin-bottom: 1rem;
 }
 
-@keyframes logo-spin {
-  from {
-    transform: rotate(0deg);
-  }
-  to {
-    transform: rotate(360deg);
-  }
+.login-card h1 {
+  color: var(--text-white);
+  margin-bottom: 0.5rem;
 }
 
-@media (prefers-reduced-motion: no-preference) {
-  a:nth-of-type(2) .logo {
-    animation: logo-spin infinite 20s linear;
-  }
+.login-card p {
+  color: var(--text-gray);
+  margin-bottom: 2rem;
 }
 
-.card {
-  padding: 2em;
+.input-field {
+  width: 100%;
+  padding: 12px;
+  border-radius: 8px;
+  border: 1px solid #4A5568;
+  background: #1A202C;
+  color: white;
+  margin-bottom: 1rem;
+  font-size: 1rem;
+  box-sizing: border-box;
+  /* ป้องกันกล่องล้น */
 }
 
-.read-the-docs {
-  color: #888;
+.input-field:focus {
+  outline: none;
+  border-color: var(--primary-color);
+  box-shadow: 0 0 0 3px rgba(107, 70, 193, 0.3);
+}
+
+/* --- Button Styles --- */
+.btn-primary {
+  width: 100%;
+  padding: 12px;
+  background: linear-gradient(135deg, var(--primary-color), var(--primary-dark));
+  color: white;
+  border: none;
+  border-radius: 8px;
+  font-size: 1rem;
+  font-weight: bold;
+  cursor: pointer;
+  transition: transform 0.2s;
+}
+
+.btn-primary:hover {
+  transform: translateY(-2px);
+  filter: brightness(1.1);
+}
+
+.btn-secondary {
+  background: transparent;
+  border: 1px solid var(--text-gray);
+  color: var(--text-gray);
+  padding: 8px 16px;
+  border-radius: 6px;
+  cursor: pointer;
+}
+
+.btn-secondary:hover {
+  background: rgba(255, 255, 255, 0.1);
+  color: white;
+}
+
+/* --- Dashboard Styles --- */
+.dashboard-container {
+  width: 100%;
+  max-width: 800px;
+  background: var(--card-bg);
+  border-radius: 16px;
+  padding: 2rem;
+  box-shadow: 0 10px 25px rgba(0, 0, 0, 0.3);
+}
+
+.dashboard-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  border-bottom: 2px solid #4A5568;
+  padding-bottom: 1rem;
+  margin-bottom: 2rem;
+}
+
+.dashboard-header h2 {
+  margin: 0;
+  font-size: 1.5rem;
+}
+
+.badge {
+  background-color: var(--primary-color);
+  color: white;
+  padding: 4px 8px;
+  border-radius: 4px;
+  font-size: 0.8rem;
+  margin-top: 5px;
+  display: inline-block;
+}
+
+.table-responsive {
+  overflow-x: auto;
+}
+
+.purple-table {
+  width: 100%;
+  border-collapse: collapse;
+  margin-top: 1rem;
+}
+
+.purple-table th {
+  background-color: rgba(107, 70, 193, 0.2);
+  color: var(--primary-color);
+  text-align: left;
+  padding: 12px;
+  border-radius: 8px 8px 0 0;
+}
+
+.purple-table td {
+  padding: 12px;
+  border-bottom: 1px solid #4A5568;
+}
+
+.status-ok {
+  background-color: rgba(72, 187, 120, 0.2);
+  color: #48BB78;
+  padding: 4px 8px;
+  border-radius: 12px;
+  font-size: 0.85rem;
+}
+
+.empty-state {
+  text-align: center;
+  padding: 2rem;
+  color: var(--text-gray);
+  background: rgba(0, 0, 0, 0.2);
+  border-radius: 8px;
 }
